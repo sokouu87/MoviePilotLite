@@ -1,0 +1,88 @@
+name: Build IPA Preview
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "ci/ipa-preview"
+      - "ci/ipa-preview/**"
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate build metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: *//' | sed 's/+.*//' | tr -d ' ')
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          NAME="ios-v${VERSION}-${SHORT_SHA}"
+          echo "ipa_name=${NAME}.ipa" >> "$GITHUB_OUTPUT"
+          echo "ipa_sha_name=${NAME}.ipa.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.38.2"
+          channel: "stable"
+          cache: true
+
+      - name: Cache Flutter pub
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-pub-${{ hashFiles('pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+
+      - name: Refresh altman_downloader_control
+        run: flutter pub upgrade altman_downloader_control
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Cache CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: |
+            ios/Pods
+            ~/Library/Caches/CocoaPods
+          key: ${{ runner.os }}-pods-${{ hashFiles('ios/Podfile.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pods-
+
+      - name: Install CocoaPods
+        env:
+          TYPHOEUS_HTTP_VERSION: CURL_HTTP_VERSION_1_1
+        run: |
+          cd ios
+          pod install
+
+      - name: Build unsigned iOS app
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter build ios --release --no-codesign --dart-define=FLUTTER_APP_ENV=release
+
+          cd build/ios/iphoneos
+          rm -rf Payload
+          mkdir -p Payload
+          cp -R Runner.app Payload/
+          zip -r -y "${{ steps.meta.outputs.ipa_name }}" Payload
+          shasum -a 256 "${{ steps.meta.outputs.ipa_name }}" > "${{ steps.meta.outputs.ipa_sha_name }}"
+
+      - name: Upload iOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-preview
+          path: |
+            build/ios/iphoneos/${{ steps.meta.outputs.ipa_name }}
+            build/ios/iphoneos/${{ steps.meta.outputs.ipa_sha_name }}
+          if-no-files-found: error
+          retention-days: 7
