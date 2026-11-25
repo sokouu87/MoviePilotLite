@@ -18,6 +18,34 @@ import 'package:moviepilot_mobile/utils/open_url.dart';
 import 'package:moviepilot_mobile/widgets/load_more_footer.dart';
 import 'package:moviepilot_mobile/widgets/section_header.dart';
 
+Future<void> openHyruleUpload(
+  BuildContext context,
+  Map<String, dynamic> row,
+) async {
+  final media = {'title': row['title'], 'media_type': 'movie'};
+  final target = {
+    'id': row['id'],
+    'name': row['file'],
+    'title': row['title'],
+    'path': row['display'],
+    'writable': row['available'],
+    'original': row['original'],
+  };
+  final controller = SubtitleManualUploadFormController(formMode: false);
+  try {
+    controller.selectedMedia.value = media;
+    controller.targets.assignAll([target]);
+    controller.openSingleUpload(target);
+    await _push(
+      context,
+      '上传字幕',
+      (_) => _UploadPanel(controller: controller),
+    );
+  } finally {
+    controller.onClose();
+  }
+}
+
 void registerSubtitleManualUploadRenderer() {
   PluginFormAdapterRegistry.registerRenderer('SubtitleManualUpload', (
     context,
@@ -818,6 +846,8 @@ class _MediaListCard extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final isTv = _isTvMedia(media);
+    final poster = _mediaPoster(media);
+    final showPoster = media['text_only'] != true && poster.isNotEmpty;
     final title = _mediaDisplayTitle(media);
     final year = _mediaYearText(media);
     final stats = _mediaStats(media);
@@ -825,15 +855,19 @@ class _MediaListCard extends StatelessWidget {
     return _ListCard(
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 12, 8, 12),
+        padding: EdgeInsets.fromLTRB(
+          12,
+          showPoster ? 12 : 7,
+          8,
+          showPoster ? 12 : 7,
+        ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            _MediaListPoster(
-              url: _mediaPoster(media),
-              isTv: isTv,
-            ),
-            const SizedBox(width: 12),
+            if (showPoster) ...[
+              _MediaListPoster(url: poster, isTv: isTv),
+              const SizedBox(width: 12),
+            ],
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1676,7 +1710,9 @@ class _HistoryCard extends StatelessWidget {
         child: Column(
           children: [
             ListTile(
-              leading: _Poster(url: _mediaPoster(item)),
+              leading: item['text_only'] == true || _mediaPoster(item).isEmpty
+                  ? null
+                  : _Poster(url: _mediaPoster(item)),
               title: Text(
                 controller.mediaLabel(item),
                 style: Theme.of(

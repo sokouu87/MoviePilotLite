@@ -23,6 +23,19 @@ class SubtitleManualUploadService {
   static const pluginId = 'SubtitleManualUpload';
   static const basePath = '/api/v1/plugin/SubtitleManualUpload';
 
+  Future<SubtitleManualUploadApiResult> recentMovies(String token) async {
+    final response = await _apiClient.get<dynamic>(
+      '$basePath/library_page',
+      token: token,
+      queryParameters: const {
+        'state': 'recent',
+        'kind': 'Movie',
+        'order': 'desc',
+      },
+    );
+    return _unwrap(response);
+  }
+
   Future<SubtitleManualUploadApiResult> getForm(String token) async {
     final response = await _apiClient.get<dynamic>(
       '/api/v1/plugin/form/$pluginId',

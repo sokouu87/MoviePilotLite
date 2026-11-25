@@ -20,12 +20,14 @@ import 'package:path_provider/path_provider.dart';
 class DashboardController extends GetxController {
   static const String _localConfigFileName = 'dashboard_config.json';
   static const int _localConfigVersion = 1;
+  static const hyruleWidgetName = '海拉鲁 AI 字幕';
 
   /// 可用的组件类型
   static const List<String> availableWidgets = [
     '存储空间',
     '媒体统计',
     '最近入库',
+    hyruleWidgetName,
     '实时速率',
     '后台任务',
     'CPU',
@@ -93,6 +95,7 @@ class DashboardController extends GetxController {
   Timer? _refreshTimer;
   Timer? _cookieTimer;
   bool _hasLocalDashboardConfig = false;
+  bool _showHyrule = true;
   bool _isLoadingDashboardData = false;
 
   @override
@@ -458,6 +461,7 @@ class DashboardController extends GetxController {
     if (config.storage) widgets.add('存储空间');
     if (config.mediaStatistic) widgets.add('媒体统计');
     if (config.weeklyOverview) widgets.add('最近入库');
+    if (_showHyrule) widgets.add(hyruleWidgetName);
     if (config.speed) widgets.add('实时速率');
     if (config.scheduler) widgets.add('后台任务');
     if (config.cpu) widgets.add('CPU');
@@ -545,10 +549,12 @@ class DashboardController extends GetxController {
   }
 
   Future<void> applyLocalDashboardLayout(List<String> orderedVisible) async {
+    _showHyrule = orderedVisible.contains(hyruleWidgetName);
     final nameToIdMap = {
       '存储空间': 'storage',
       '媒体统计': 'mediaStatistic',
       '最近入库': 'weeklyOverview',
+      hyruleWidgetName: 'hyrule',
       '实时速率': 'speed',
       '后台任务': 'scheduler',
       'CPU': 'cpu',
@@ -604,6 +610,7 @@ class DashboardController extends GetxController {
       'storage': '存储空间',
       'mediaStatistic': '媒体统计',
       'weeklyOverview': '最近入库',
+      'hyrule': hyruleWidgetName,
       'speed': '实时速率',
       'scheduler': '后台任务',
       'cpu': 'CPU',
@@ -651,6 +658,7 @@ class DashboardController extends GetxController {
       final profile = profiles[_profileKey()];
       if (profile is! Map) return;
 
+      _showHyrule = profile['hyrule'] != false;
       final configRaw = profile['config'];
       DashboardConfigValue? loadedConfigValue;
       if (configRaw is Map) {
@@ -712,6 +720,7 @@ class DashboardController extends GetxController {
       }
       if (configValue != null) {
         profile['config'] = configValue.toJson();
+        profile['hyrule'] = _showHyrule;
         _hasLocalDashboardConfig = true;
       }
       if (orderItems != null) {

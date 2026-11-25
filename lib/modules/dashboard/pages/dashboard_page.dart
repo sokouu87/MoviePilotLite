@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:moviepilot_mobile/gen/assets.gen.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/dashboard_widget_styles.dart';
+import 'package:moviepilot_mobile/modules/dashboard/widgets/hyrule_recent_widget.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/cpu_widget.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/media_stats_widget.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/memory_widget.dart';
@@ -257,6 +258,8 @@ class DashboardPage extends GetView<DashboardController> {
           if (_showAny(visible, {'媒体统计', '存储空间'}))
             _buildLibraryCapacitySection(context),
 
+          if (visible.contains(DashboardController.hyruleWidgetName))
+            const HyruleRecentWidget(),
           if (_showAny(visible, {'最近添加', '我的媒体库', '继续观看'}))
             _buildMediaBrowseSection(context, visible),
           if (visible.contains('最近入库'))
