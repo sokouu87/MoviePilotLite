@@ -5,6 +5,7 @@ import 'package:get/get.dart';
 import 'package:moviepilot_mobile/modules/music/models/music_models.dart';
 import 'package:moviepilot_mobile/modules/search/pages/search_mid_sheet.dart';
 import 'package:moviepilot_mobile/modules/search/services/search_keyword_hints_service.dart';
+import 'package:moviepilot_mobile/modules/site/controllers/site_controller.dart';
 import 'package:moviepilot_mobile/services/api_client.dart';
 import 'package:moviepilot_mobile/services/app_service.dart';
 import 'package:moviepilot_mobile/services/server_api_version_service.dart';
@@ -37,6 +38,7 @@ class SearchIndexController extends GetxController {
   final RxList<SearchHistoryEntry> histories = <SearchHistoryEntry>[].obs;
   final RxList<SearchSuggestionItem> suggestions = <SearchSuggestionItem>[].obs;
   final RxBool hasSearchFocus = false.obs;
+  bool _siteActionInProgress = false;
 
   /// 搜索页"浏览"宫格的音乐卡片：仅 v3 服务端展示，封面取自音乐探索接口
   final RxList<MusicExploreItem> musicExploreItems = <MusicExploreItem>[].obs;
@@ -118,7 +120,7 @@ class SearchIndexController extends GetxController {
   void applyHistorySuggestion(SearchInputPick pick) {
     fillKeyword(pick.keyword, focus: false);
     focusNode.unfocus();
-    submit(pick.keyword);
+    submitMediaSearch(pick.keyword);
   }
 
   void loadHistories() {
@@ -170,13 +172,80 @@ class SearchIndexController extends GetxController {
     loadHistories();
   }
 
-  void submit([String? value]) {
-    var term = (value ?? keyword.value).trim();
-    if (term.isEmpty) {
-      term = textController.text.trim();
-    }
+  String _searchTerm(String? value) {
+    final term = (value ?? keyword.value).trim();
+    return term.isEmpty ? textController.text.trim() : term;
+  }
+
+  void submitMediaSearch([String? value]) {
+    final term = _searchTerm(value);
     if (term.isEmpty) return;
     openMediaSearch(term);
+  }
+
+  Future<void> submitSiteSearch(String value) async {
+    final term = _searchTerm(value);
+    if (term.isEmpty || _siteActionInProgress) return;
+    final app = Get.find<AppService>();
+    if (!app.canSearch) {
+      openMediaSearch(term);
+      return;
+    }
+    final route = Get.currentRoute;
+    _siteActionInProgress = true;
+    focusNode.unfocus();
+    try {
+      var sites = await SiteSelectSheet.readSearchSelection(app);
+      if (sites.isEmpty) {
+        sites = await SiteController.fetchEnabledSiteIds(Get.find<ApiClient>());
+      }
+      if (isClosed || Get.currentRoute != route) return;
+      if (sites.isEmpty) {
+        ToastUtil.info('没有已启用的搜索站点');
+        return;
+      }
+      try {
+        saveHistory(term);
+      } catch (_) {}
+      _openSiteResults(term, sites);
+    } catch (_) {
+      if (!isClosed) ToastUtil.error('加载搜索站点失败，请重试');
+    } finally {
+      _siteActionInProgress = false;
+    }
+  }
+
+  Future<({String area, List<int> sites})?> _pickSearchSites() async {
+    if (!Get.find<AppService>().canSearch || _siteActionInProgress) return null;
+    _siteActionInProgress = true;
+    focusNode.unfocus();
+    try {
+      return await Get.bottomSheet<({String area, List<int> sites})>(
+        const SiteSelectSheet(),
+        isScrollControlled: true,
+      );
+    } finally {
+      _siteActionInProgress = false;
+    }
+  }
+
+  Future<void> selectSearchSites() async {
+    final wasFocused = focusNode.hasFocus;
+    await _pickSearchSites();
+    if (wasFocused && !isClosed) requestSearchBarFocus();
+  }
+
+  void _openSiteResults(String term, List<int> sites, {String area = 'title'}) {
+    Get.toNamed(
+      '/search-media-result',
+      parameters: {
+        'mediaSearchKey': 'search/title',
+        'area': area,
+        'sites': sites.join(','),
+        'title': term,
+        'type': 'title',
+      },
+    );
   }
 
   void openMediaSearch(
@@ -184,7 +253,7 @@ class SearchIndexController extends GetxController {
     SearchSuggestionItem? suggestion,
   }) async {
     final term = keyword.trim();
-    if (term.isEmpty) return;
+    if (term.isEmpty || _siteActionInProgress) return;
     focusNode.unfocus();
     try {
       saveHistory(term);
@@ -225,24 +294,14 @@ class SearchIndexController extends GetxController {
           ToastUtil.info('当前帐号无资源搜索权限');
           return;
         }
-        final result = await Get.bottomSheet<({String area, List<int> sites})>(
-          SiteSelectSheet(hasSegment: false),
-          isScrollControlled: true,
-        );
+        final result = await _pickSearchSites();
         if (result == null) return;
         final (area, sites) = (result.area, result.sites);
         if (sites.isEmpty) {
           ToastUtil.info('请至少选择一个站点');
           return;
         }
-        final params = <String, String>{
-          'mediaSearchKey': 'search/title',
-          'area': area,
-          'sites': sites.join(','),
-          'title': term,
-          'type': 'title',
-        };
-        Get.toNamed('/search-media-result', parameters: params);
+        _openSiteResults(term, sites, area: area);
         break;
       default:
         Get.toNamed(
@@ -264,10 +323,14 @@ class SearchIndexController extends GetxController {
   }
 
   void requestSearchBarFocus() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!focusNode.canRequestFocus) return;
+    if (isClosed || !focusNode.canRequestFocus) return;
+    final editor = focusNode.context
+        ?.findAncestorStateOfType<EditableTextState>();
+    if (editor != null) {
+      editor.requestKeyboard();
+    } else {
       focusNode.requestFocus();
-    });
+    }
   }
 
   void _handleTextChange() {

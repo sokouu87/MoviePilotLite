@@ -77,7 +77,22 @@ class SiteController extends GetxController {
     }
   }
 
-  SiteModel _safeParseSiteModel(Map<String, dynamic> json) {
+  static Future<List<int>> fetchEnabledSiteIds(ApiClient api) async {
+    final response = await api.get<dynamic>('/api/v1/site/');
+    final sites = response.data;
+    if ((response.statusCode ?? 500) >= 400 || sites is! List) {
+      throw StateError('获取搜索站点失败');
+    }
+    return sites
+        .whereType<Map<String, dynamic>>()
+        .map(_safeParseSiteModel)
+        .where((site) => site.id > 0 && site.isActive)
+        .map((site) => site.id)
+        .toSet()
+        .toList();
+  }
+
+  static SiteModel _safeParseSiteModel(Map<String, dynamic> json) {
     int asInt(Object? v, {int def = 0}) {
       if (v == null) return def;
       if (v is int) return v;

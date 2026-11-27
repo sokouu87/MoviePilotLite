@@ -16,6 +16,21 @@ class HyruleRecentWidget extends StatelessWidget {
   final Map<String, dynamic> library;
   final Future<void> Function() onRefresh;
 
+  Future<void> _openPlugin(
+    BuildContext context, {
+    bool focusSearch = false,
+  }) async {
+    await Get.toNamed<void>(
+      '/plugin/dynamic-form/page',
+      arguments: {
+        'id': SubtitleManualUploadService.pluginId,
+        'title': DashboardController.hyruleWidgetName,
+        if (focusSearch) 'focusSearch': true,
+      },
+    );
+    if (context.mounted) await onRefresh();
+  }
+
   @override
   Widget build(BuildContext context) {
     final rows = SubtitleManualUploadFormController.asMapList(
@@ -32,9 +47,21 @@ class HyruleRecentWidget extends StatelessWidget {
             Row(
               children: [
                 Expanded(
-                  child: Text(
-                    DashboardController.hyruleWidgetName,
-                    style: theme.textTheme.titleSmall,
+                  child: TextButton(
+                    onPressed: () => _openPlugin(context),
+                    style: TextButton.styleFrom(
+                      alignment: AlignmentDirectional.centerStart,
+                      foregroundColor: theme.colorScheme.onSurface,
+                      minimumSize: const Size(0, 44),
+                      padding: EdgeInsets.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: Text(
+                      DashboardController.hyruleWidgetName,
+                      style: theme.textTheme.titleSmall,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                 ),
                 TextButton.icon(
@@ -45,17 +72,7 @@ class HyruleRecentWidget extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
-                  onPressed: () async {
-                    await Get.toNamed<void>(
-                      '/plugin/dynamic-form/page',
-                      arguments: {
-                        'id': SubtitleManualUploadService.pluginId,
-                        'title': DashboardController.hyruleWidgetName,
-                        'focusSearch': true,
-                      },
-                    );
-                    if (context.mounted) await onRefresh();
-                  },
+                  onPressed: () => _openPlugin(context, focusSearch: true),
                 ),
               ],
             ),

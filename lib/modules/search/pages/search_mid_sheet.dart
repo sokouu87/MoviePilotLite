@@ -5,6 +5,7 @@ import 'package:get/get.dart';
 import 'package:moviepilot_mobile/modules/site/controllers/site_controller.dart';
 import 'package:moviepilot_mobile/modules/site/models/site_models.dart';
 import 'package:moviepilot_mobile/services/app_service.dart';
+import 'package:moviepilot_mobile/utils/toast_util.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 enum SiteSelectScene { search, subscribe }
@@ -25,6 +26,22 @@ class SiteSelectSheet extends StatefulWidget {
   final List<int>? disabledIds;
   final List<int>? seasons;
   final String? mediaSearchKey;
+
+  static String _selectionKey(AppService appService) {
+    final baseUrl = appService.baseUrl ?? 'unknown';
+    final userId = appService.loginResponse?.userId ?? 0;
+    return 'site_select_last:$baseUrl:$userId';
+  }
+
+  static Future<List<int>> readSearchSelection(AppService appService) async {
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getStringList(_selectionKey(appService)) ?? const <String>[])
+        .map(int.tryParse)
+        .whereType<int>()
+        .where((id) => id > 0)
+        .toList();
+  }
+
   @override
   State<SiteSelectSheet> createState() => _SiteSelectSheetState();
 }
@@ -37,8 +54,8 @@ class _SiteSelectSheetState extends State<SiteSelectSheet> {
   final season = 0.obs;
   final _iconFutures = <int, Future<List<int>?>>{};
   late final Worker _siteItemsWorker;
+  bool _saving = false;
 
-  static const _prefsKeyPrefix = 'site_select_last';
   static const _prefsKeyPrefixSeason = 'media_search_last_season';
 
   Set<int> get _disabledSiteIds => {
@@ -47,15 +64,23 @@ class _SiteSelectSheetState extends State<SiteSelectSheet> {
       if (!item.site.isActive) item.site.id,
   };
 
-  void _done() {
+  Future<void> _done() async {
+    if (_saving) return;
+    _saving = true;
     _filterSelection(allowEmpty: true);
-    if (widget.scene == SiteSelectScene.search) {
-      _persistSelection();
-      _persistSeason();
+    final result = (area: area.value, sites: selectedSite.toList());
+    try {
+      if (widget.scene == SiteSelectScene.search) {
+        await _persistSelection(result.sites);
+        await _persistSeason();
+      }
+      if (!mounted || ModalRoute.of(context)?.isCurrent != true) return;
+      Navigator.of(context).pop(result);
+    } catch (_) {
+      if (mounted) ToastUtil.error('保存搜索站点失败，请重试');
+    } finally {
+      _saving = false;
     }
-    // 使用 Navigator.pop 确保关闭当前 bottom sheet 并返回结果。
-    // Get.back() 会优先关闭 snackbar，导致 bottom sheet 不会被 pop，await 永不完结。
-    Navigator.of(context).pop((area: area.value, sites: selectedSite.toList()));
   }
 
   @override
@@ -81,23 +106,16 @@ class _SiteSelectSheetState extends State<SiteSelectSheet> {
   }
 
   Future<void> _loadSelection() async {
-    if (widget.scene != SiteSelectScene.search) return;
-    final prefs = await SharedPreferences.getInstance();
-    final key = _buildPrefsKey();
-    final raw = prefs.getStringList(key) ?? const <String>[];
-    if (raw.isEmpty) return;
-    final ids = raw.map((e) => int.tryParse(e)).whereType<int>().toList();
-    if (ids.isEmpty) return;
+    final ids = await SiteSelectSheet.readSearchSelection(appService);
+    if (!mounted || ids.isEmpty) return;
     selectedSite.assignAll(ids);
     _filterSelection();
   }
 
-  Future<void> _persistSelection() async {
-    if (widget.scene != SiteSelectScene.search) return;
+  Future<void> _persistSelection(List<int> sites) async {
+    final key = SiteSelectSheet._selectionKey(appService);
     final prefs = await SharedPreferences.getInstance();
-    final key = _buildPrefsKey();
-    final values = selectedSite.map((e) => e.toString()).toList();
-    await prefs.setStringList(key, values);
+    await prefs.setStringList(key, sites.map((id) => id.toString()).toList());
   }
 
   Future<void> _loadSeason() async {
@@ -126,15 +144,6 @@ class _SiteSelectSheetState extends State<SiteSelectSheet> {
     final baseUrl = appService.baseUrl ?? 'unknown';
     final userId = appService.loginResponse?.userId ?? 0;
     return '$_prefsKeyPrefixSeason:$baseUrl:$userId:$mediaSearchKey';
-  }
-
-  String _buildPrefsKey() {
-    if (widget.scene != SiteSelectScene.search) {
-      return _prefsKeyPrefix;
-    }
-    final baseUrl = appService.baseUrl ?? 'unknown';
-    final userId = appService.loginResponse?.userId ?? 0;
-    return '$_prefsKeyPrefix:$baseUrl:$userId';
   }
 
   void _filterSelection({bool allowEmpty = false}) {

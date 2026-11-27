@@ -193,6 +193,26 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets('点击海拉鲁字幕标题直达插件主页', (tester) async {
+    await showCard(
+      tester,
+      pages: [
+        GetPage<void>(
+          name: '/plugin/dynamic-form/page',
+          page: () {
+            expect(Get.arguments['id'], 'SubtitleManualUpload');
+            expect(Get.arguments['focusSearch'], isNull);
+            return const Scaffold(body: Text('插件主页'));
+          },
+        ),
+      ],
+    );
+    await tester.tap(find.text('海拉鲁字幕'));
+    await tester.pumpAndSettle();
+    expect(find.text('插件主页'), findsOneWidget);
+    expect(find.byType(EditableText), findsNothing);
+  });
+
   testWidgets('窄屏显示三部无海报电影，SubHD 直接交给系统浏览器', (tester) async {
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;

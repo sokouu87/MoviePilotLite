@@ -167,6 +167,7 @@ class SearchIndexPage extends GetView<SearchIndexController> {
   }
 
   Widget _historyStyleSearchBar(BuildContext context) {
+    final app = Get.find<AppService>();
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     const barH = 52.0;
@@ -222,18 +223,6 @@ class SearchIndexPage extends GetView<SearchIndexController> {
                             fontSize: textFontSize,
                             fontWeight: FontWeight.w400,
                           ),
-                          prefix: Padding(
-                            padding: const EdgeInsetsDirectional.only(
-                              start: 12,
-                              end: 6,
-                            ),
-                            child: Icon(
-                              CupertinoIcons.search,
-                              size: 18,
-                              color: colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                          prefixMode: OverlayVisibilityMode.always,
                           suffix: Obx(() {
                             if (controller.keyword.value.isEmpty) {
                               return const SizedBox.shrink();
@@ -271,6 +260,7 @@ class SearchIndexPage extends GetView<SearchIndexController> {
                           }),
                           suffixMode: OverlayVisibilityMode.always,
                           padding: const EdgeInsetsDirectional.only(
+                            start: 14,
                             top: 10,
                             bottom: 10,
                             end: 12,
@@ -278,38 +268,43 @@ class SearchIndexPage extends GetView<SearchIndexController> {
                           cursorColor: colorScheme.primary,
                           onChanged: (value) =>
                               controller.keyword.value = value,
-                          onSubmitted: controller.submit,
-                        ),
-                      ),
-                      VerticalDivider(
-                        width: 1,
-                        thickness: 1,
-                        indent: 12,
-                        endIndent: 12,
-                        color: colorScheme.outlineVariant.withValues(
-                          alpha: 0.72,
+                          textInputAction: TextInputAction.search,
+                          onSubmitted: controller.submitSiteSearch,
                         ),
                       ),
                       Obx(() {
-                        final enabled =
-                            Get.find<AppService>().showSearchButton.value;
-                        if (!enabled) return const SizedBox.shrink();
-
-                        return InkWell(
-                          onTap: () => controller.submit(),
-                          child: SizedBox(
-                            width: 48,
-                            height: barH,
-                            child: Center(
-                              child: Icon(
-                                Icons.search_rounded,
-                                size: 22,
-                                color: colorScheme.primary.withValues(
-                                  alpha: 0.95,
-                                ),
+                        final showMediaSearch = app.showSearchButton.value;
+                        if (!showMediaSearch && !app.canSearch) {
+                          return const SizedBox.shrink();
+                        }
+                        return Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            VerticalDivider(
+                              width: 1,
+                              indent: 12,
+                              endIndent: 12,
+                              color: colorScheme.outlineVariant.withValues(
+                                alpha: 0.72,
                               ),
                             ),
-                          ),
+                            if (app.canSearch)
+                              IconButton(
+                                tooltip: '选择搜索站点',
+                                onPressed: controller.selectSearchSites,
+                                icon: const Icon(Icons.dns_outlined, size: 21),
+                              ),
+                            if (showMediaSearch)
+                              IconButton(
+                                tooltip: '搜索影片',
+                                onPressed: controller.submitMediaSearch,
+                                icon: const Icon(
+                                  Icons.search_rounded,
+                                  size: 22,
+                                ),
+                                color: colorScheme.primary,
+                              ),
+                          ],
                         );
                       }),
                     ],

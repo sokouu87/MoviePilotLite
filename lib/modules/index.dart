@@ -207,14 +207,20 @@ class _IndexState extends State<Index> {
       _showTabPermissionDenied(index);
       return;
     }
-    if (index == kIndexMaxTab && _selectedIndex == kIndexMaxTab) {
-      if (Get.isRegistered<SearchIndexController>()) {
-        Get.find<SearchIndexController>().requestSearchBarFocus();
+    if (index != _selectedIndex) {
+      if (_selectedIndex == kIndexMaxTab) {
+        Get.find<SearchIndexController>().focusNode.unfocus();
       }
-      return;
+      setState(() => _selectedIndex = index);
+      _persistSelectedIndex(index);
     }
-    setState(() => _selectedIndex = index);
-    _persistSelectedIndex(index);
+    if (index == kIndexMaxTab) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _selectedIndex == kIndexMaxTab) {
+          Get.find<SearchIndexController>().requestSearchBarFocus();
+        }
+      });
+    }
     if (index == 3 && Get.isRegistered<MultifunctionController>()) {
       Get.find<MultifunctionController>().refreshDashboard();
     }
