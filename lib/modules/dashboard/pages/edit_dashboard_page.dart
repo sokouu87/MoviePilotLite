@@ -20,6 +20,7 @@ class _EditDashboardPageState extends State<EditDashboardPage> {
   final Set<String> _selectedWidgets = <String>{};
 
   static const Map<String, IconData> _widgetIcons = {
+    DashboardController.hyruleWidgetName: CupertinoIcons.captions_bubble,
     '存储空间': CupertinoIcons.folder_fill,
     '媒体统计': CupertinoIcons.chart_pie_fill,
     '推荐媒体': CupertinoIcons.sparkles,
@@ -38,6 +39,7 @@ class _EditDashboardPageState extends State<EditDashboardPage> {
   };
 
   static const Map<String, String> _widgetDescriptions = {
+    DashboardController.hyruleWidgetName: '最近 3 部电影与字幕操作',
     '存储空间': '总容量与使用率',
     '媒体统计': '电影、剧集与本月新增',
     '推荐媒体': '热门榜单横幅轮播',

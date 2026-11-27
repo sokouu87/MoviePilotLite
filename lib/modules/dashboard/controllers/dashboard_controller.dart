@@ -12,6 +12,7 @@ import 'package:moviepilot_mobile/modules/dashboard/models/dashboard_config_mode
 import 'package:moviepilot_mobile/modules/dashboard/models/dashboard_order_model.dart';
 import 'package:moviepilot_mobile/modules/dashboard/models/dashboard_system_info.dart';
 import 'package:moviepilot_mobile/modules/dashboard/models/transfer_queue_job.dart';
+import 'package:moviepilot_mobile/modules/dynamic_form/services/subtitle_manual_upload_service.dart';
 import 'package:moviepilot_mobile/modules/media_organize/models/media_organize_models.dart';
 import 'package:moviepilot_mobile/modules/mediaserver/controllers/mediaserver_controller.dart';
 import 'package:moviepilot_mobile/modules/recommend/models/recommend_api_item.dart';
@@ -41,9 +42,12 @@ class DashboardRecommendSource {
 class DashboardController extends GetxController {
   static const String _localConfigFileName = 'dashboard_config.json';
   static const int _localConfigVersion = 1;
+  static const hyruleWidgetName = '海拉鲁字幕';
+  static const _hyruleWidgetId = 'hyruleSubtitles';
 
   /// 可用的组件类型（顺序与 Web 端默认顺序一致）
   static const List<String> availableWidgets = [
+    hyruleWidgetName,
     '存储空间',
     '媒体统计',
     '推荐媒体',
@@ -63,6 +67,7 @@ class DashboardController extends GetxController {
 
   /// 组件名称 → 本地/服务端配置 id
   static const Map<String, String> widgetIdByName = {
+    hyruleWidgetName: _hyruleWidgetId,
     '存储空间': 'storage',
     '媒体统计': 'mediaStatistic',
     '推荐媒体': 'mediaRecommend',
@@ -115,6 +120,11 @@ class DashboardController extends GetxController {
 
   /// 当前显示的组件列表
   final displayedWidgets = <String>[].obs;
+  final hyruleRecent = Rxn<Map<String, dynamic>>();
+  bool _showHyrule = true;
+  bool _loadingHyrule = false;
+  String? _hyruleProfile;
+  DateTime? _hyruleReadAt;
 
   /// CPU使用率
   final cpuUsage = 0.0.obs;
@@ -887,6 +897,7 @@ class DashboardController extends GetxController {
   Future<void> refreshData() async {
     try {
       talker.info('开始刷新所有数据');
+      _hyruleReadAt = null;
       await _loadDataBasedOnConfig();
       if (displayedWidgets.contains('我的媒体库')) {
         await mediaServerController.loadMediaLibraries();
@@ -978,6 +989,7 @@ class DashboardController extends GetxController {
   void _updateDisplayedWidgets(DashboardConfigValue config) {
     final widgets = <String>[];
 
+    if (_showHyrule) widgets.add(hyruleWidgetName);
     // 根据配置添加显示的组件
     if (config.storage) widgets.add('存储空间');
     if (config.mediaStatistic) widgets.add('媒体统计');
@@ -1048,6 +1060,7 @@ class DashboardController extends GetxController {
     if (names.isEmpty) return;
     try {
       final futures = <Future<void>>[];
+      if (names.contains(hyruleWidgetName)) futures.add(loadHyruleRecent());
       if (names.contains('CPU')) futures.add(loadCpuData());
       if (names.contains('网络流量')) futures.add(loadNetworkData());
       if (names.contains('内存')) futures.add(loadMemoryData());
@@ -1073,6 +1086,42 @@ class DashboardController extends GetxController {
     } finally {
       _settledWidgets.addAll(names);
       _settledWidgets.refresh();
+    }
+  }
+
+  Future<void> loadHyruleRecent({bool force = false}) async {
+    if (!_showHyrule || !appService.canManage || _loadingHyrule) return;
+    final profile = _profileKey();
+    if (_hyruleProfile != profile) {
+      _hyruleProfile = profile;
+      _hyruleReadAt = null;
+      hyruleRecent.value = null;
+    }
+    final token =
+        appService.loginResponse?.accessToken ??
+        appService.latestLoginProfileAccessToken ??
+        apiClient.token;
+    if (token == null || token.isEmpty) return;
+    final now = DateTime.now();
+    final lastRead = _hyruleReadAt;
+    if (!force &&
+        lastRead != null &&
+        now.difference(lastRead) < const Duration(minutes: 1)) {
+      return;
+    }
+    _loadingHyrule = true;
+    _hyruleReadAt = now;
+    try {
+      final library = await SubtitleManualUploadService(
+        apiClient,
+      ).libraryPage(token: token, kind: 'Movie', recentOnly: true);
+      if (!isClosed && profile == _profileKey()) {
+        hyruleRecent.value = library;
+      }
+    } catch (error, stack) {
+      talker.handle(error, stackTrace: stack, message: '读取海拉鲁字幕片库失败');
+    } finally {
+      _loadingHyrule = false;
     }
   }
 
@@ -1117,6 +1166,7 @@ class DashboardController extends GetxController {
   }
 
   Future<void> applyLocalDashboardLayout(List<String> orderedVisible) async {
+    _showHyrule = orderedVisible.contains(hyruleWidgetName);
     final value = DashboardConfigValue(
       mediaStatistic: orderedVisible.contains('媒体统计'),
       scheduler: orderedVisible.contains('后台任务'),
@@ -1203,6 +1253,7 @@ class DashboardController extends GetxController {
       final configRaw = profile['config'];
       DashboardConfigValue? loadedConfigValue;
       if (configRaw is Map) {
+        _showHyrule = configRaw[_hyruleWidgetId] != false;
         loadedConfigValue = DashboardConfigValue.fromJson(
           Map<String, dynamic>.from(configRaw),
         );
@@ -1260,7 +1311,10 @@ class DashboardController extends GetxController {
         profile.addAll(existingProfile.cast<String, dynamic>());
       }
       if (configValue != null) {
-        profile['config'] = configValue.toJson();
+        profile['config'] = {
+          ...configValue.toJson(),
+          _hyruleWidgetId: _showHyrule,
+        };
         _hasLocalDashboardConfig = true;
       }
       if (orderItems != null) {

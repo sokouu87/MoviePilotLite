@@ -17,12 +17,16 @@ enum SubtitleMediaSortKey { defaultSort, title, year }
 
 class SubtitleManualUploadFormController extends GetxController
     implements PluginFormAdapter {
-  SubtitleManualUploadFormController({required this.formMode});
+  SubtitleManualUploadFormController({
+    required this.formMode,
+    this.singleSubtitleUpload = false,
+  });
 
   @override
   final String pluginId = SubtitleManualUploadService.pluginId;
 
   final bool formMode;
+  final bool singleSubtitleUpload;
 
   final _apiClient = Get.find<ApiClient>();
   final _appService = Get.find<AppService>();
@@ -278,24 +282,62 @@ class SubtitleManualUploadFormController extends GetxController
     busy.value = false;
   }
 
+  final libraryAiAvailable = false.obs;
+  bool _usesLegacySearch = false;
+  int _mediaSearchRequest = 0;
+
   Future<void> runSearch({bool reset = true, bool silent = false}) async {
+    if (!reset && mediaSearching.value) return;
+    final request = ++_mediaSearchRequest;
     mediaSearching.value = true;
     await _guard(
       () async {
         if (reset) {
           mediaPage.value = 1;
+          mediaHasMore.value = false;
           medias.clear();
           selectedMedia.value = null;
           clearTargetState();
         }
         final page = reset ? 1 : mediaPage.value + 1;
+        final token = _requireToken();
+        final keyword = searchKeyword.value.trim();
+        final type = mediaType.value;
+        if (!_usesLegacySearch) {
+          final library = await _service.libraryPage(
+            token: token,
+            keyword: keyword,
+            kind: switch (type) {
+              'movie' => 'Movie',
+              'tv' => 'Episode',
+              _ => 'all',
+            },
+            offset: reset ? 0 : medias.length,
+          );
+          if (request != _mediaSearchRequest) return;
+          if (library != null) {
+            final rows = asMapList(library['rows']);
+            libraryAiAvailable.value = library['configured'] == true;
+            mediaPage.value = page;
+            mediaTotal.value = asInt(library['matches'], rows.length);
+            mediaHasMore.value = library['more'] == true;
+            if (reset) {
+              medias.assignAll(rows);
+            } else {
+              medias.addAll(rows);
+            }
+            return;
+          }
+          _usesLegacySearch = true;
+        }
         final result = await _service.search(
-          token: _requireToken(),
-          keyword: searchKeyword.value.trim(),
-          mediaType: mediaType.value,
+          token: token,
+          keyword: keyword,
+          mediaType: type,
           page: page,
           pageSize: _mediaPageSize,
         );
+        if (request != _mediaSearchRequest) return;
         final data = asMap(result.data) ?? {};
         final next = asMapList(data['medias']);
         mediaPage.value = asInt(data['page'], page);
@@ -315,7 +357,7 @@ class SubtitleManualUploadFormController extends GetxController
       fallback: '搜索本地资源失败',
       silent: silent,
     );
-    mediaSearching.value = false;
+    if (request == _mediaSearchRequest) mediaSearching.value = false;
   }
 
   bool get hasActiveMediaFilters => mediaType.value != 'all';
@@ -482,27 +524,34 @@ class SubtitleManualUploadFormController extends GetxController
 
   Future<void> pickUploadFiles() async {
     final result = await fp.FilePicker.pickFiles(
-      allowMultiple: true,
+      allowMultiple: !singleSubtitleUpload,
       type: fp.FileType.custom,
-      allowedExtensions: [
-        'ass',
-        'srt',
-        'ssa',
-        'sbv',
-        'sub',
-        'vtt',
-        'webvtt',
-        'zip',
-        'rar',
-        '7z',
-      ],
+      allowedExtensions: singleSubtitleUpload
+          ? ['srt', 'ass', 'ssa', 'zip']
+          : [
+              'ass',
+              'srt',
+              'ssa',
+              'sbv',
+              'sub',
+              'vtt',
+              'webvtt',
+              'zip',
+              'rar',
+              '7z',
+            ],
       withData: false,
     );
     if (result == null || result.files.isEmpty) return;
-    final known = pickedFiles.map((e) => '${e.name}:${e.size}').toSet();
-    for (final file in result.files) {
-      if (known.add('${file.name}:${file.size}')) pickedFiles.add(file);
+    if (singleSubtitleUpload) {
+      pickedFiles.assignAll([result.files.single]);
+    } else {
+      final known = pickedFiles.map((e) => '${e.name}:${e.size}').toSet();
+      for (final file in result.files) {
+        if (known.add('${file.name}:${file.size}')) pickedFiles.add(file);
+      }
     }
+    uploadPreview.value = null;
     await prepareUpload();
   }
 
@@ -555,6 +604,10 @@ class SubtitleManualUploadFormController extends GetxController
     final preview = uploadPreview.value;
     if (preview == null) return;
     final items = selectedPreviewItems;
+    if (singleSubtitleUpload && items.length != 1) {
+      ToastUtil.error('请选择一份字幕写入');
+      return;
+    }
     if (items.isEmpty ||
         items.any((item) => _text(item['target_id']).isEmpty)) {
       ToastUtil.error('请先确认字幕匹配目标');
@@ -606,9 +659,17 @@ class SubtitleManualUploadFormController extends GetxController
     if (preview == null) return;
     for (final item in asMapList(preview['items'])) {
       if (_text(item['upload_id']) == uploadId) {
-        item['language_suffix'] = language.trim().isEmpty
-            ? 'und'
-            : language.trim();
+        final suffix = language.trim().isEmpty ? 'und' : language.trim();
+        if (singleSubtitleUpload) {
+          final name = _text(item['output_name']);
+          final extension = _text(item['ext']);
+          final ending = '.${item['language_suffix']}.manual$extension';
+          if (name.endsWith(ending)) {
+            item['output_name'] =
+                '${name.substring(0, name.length - ending.length)}.$suffix.manual$extension';
+          }
+        }
+        item['language_suffix'] = suffix;
         item['output_name'] = buildOutputName(
           targetById[_text(item['target_id'])],
           item,
@@ -622,7 +683,11 @@ class SubtitleManualUploadFormController extends GetxController
     final preview = uploadPreview.value;
     if (preview == null) return;
     for (final item in asMapList(preview['items'])) {
-      if (_text(item['upload_id']) == uploadId) item['selected'] = selected;
+      if (_text(item['upload_id']) == uploadId) {
+        item['selected'] = selected;
+      } else if (singleSubtitleUpload && selected) {
+        item['selected'] = false;
+      }
     }
     uploadPreview.value = Map<String, dynamic>.from(preview);
   }
@@ -1246,7 +1311,9 @@ class SubtitleManualUploadFormController extends GetxController
   void _normalizePreviewSelection(Map<String, dynamic> preview) {
     final items = asMapList(preview['items']);
     for (var i = 0; i < items.length; i++) {
-      items[i]['selected'] = preview['source'] == 'online' && items.length > 1
+      items[i]['selected'] = singleSubtitleUpload
+          ? items.length == 1
+          : preview['source'] == 'online' && items.length > 1
           ? i == 0
           : items[i]['selected'] != false;
       items[i]['output_name'] = buildOutputName(

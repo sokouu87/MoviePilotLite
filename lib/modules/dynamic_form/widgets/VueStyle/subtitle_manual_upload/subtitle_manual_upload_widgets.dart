@@ -15,6 +15,7 @@ import 'package:moviepilot_mobile/modules/settings/state/settings_form_row_build
 import 'package:moviepilot_mobile/modules/search_result/widgets/sort_pull_down_widget.dart';
 import 'package:moviepilot_mobile/theme/section.dart';
 import 'package:moviepilot_mobile/utils/open_url.dart';
+import 'package:moviepilot_mobile/utils/toast_util.dart';
 import 'package:moviepilot_mobile/widgets/load_more_footer.dart';
 import 'package:moviepilot_mobile/widgets/section_header.dart';
 
@@ -58,15 +59,32 @@ class SubtitleManualUploadRenderer extends StatelessWidget {
   }
 }
 
-class _SubtitlePageView extends StatelessWidget {
+class _SubtitlePageView extends StatefulWidget {
   const _SubtitlePageView({required this.controller});
 
   final SubtitleManualUploadFormController controller;
 
+  @override
+  State<_SubtitlePageView> createState() => _SubtitlePageViewState();
+}
+
+class _SubtitlePageViewState extends State<_SubtitlePageView> {
   static const double _listBottomSpacer = 120;
 
   @override
+  void initState() {
+    super.initState();
+    final args = Get.arguments;
+    if (args is Map && args['focusSearch'] == true) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _openMediaKeywordSheet(context, widget.controller);
+      });
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final controller = widget.controller;
     return Scaffold(
       backgroundColor: Colors.transparent,
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
@@ -287,7 +305,7 @@ Future<void> _openMediaKeywordSheet(
     },
   );
   textController.dispose();
-  if (submitted == null) return;
+  if (submitted == null || !context.mounted) return;
   controller.updateMediaKeyword(submitted);
 }
 
@@ -723,21 +741,18 @@ class _MediaResults extends StatelessWidget {
       final medias = controller.visibleMedias;
       final hasMore = controller.mediaHasMore.value;
       final total = controller.mediaTotal.value;
+      final libraryAiAvailable = controller.libraryAiAvailable.value;
       final keyword = controller.searchKeyword.value.trim();
       final typeLabel = switch (controller.mediaType.value) {
         'movie' => '电影',
         'tv' => '剧集',
         _ => '全部',
       };
-      final subtitle = keyword.isEmpty
-          ? '本地媒体库 · $typeLabel'
-          : '「$keyword」· $typeLabel';
-
       if (medias.isEmpty && !controller.mediaSearching.value) {
         return Section(
           margin: EdgeInsets.zero,
           padding: const EdgeInsets.all(12),
-          header: SectionHeader(title: '搜索资源', subtitle: subtitle),
+          header: SectionHeader(title: '片库搜索', subtitle: typeLabel),
           child: const _EmptyPanel(text: '暂无资源，刷新清单或输入关键词试试'),
         );
       }
@@ -746,8 +761,8 @@ class _MediaResults extends StatelessWidget {
         margin: EdgeInsets.zero,
         padding: const EdgeInsets.all(12),
         header: SectionHeader(
-          title: '搜索资源',
-          subtitle: medias.isEmpty ? subtitle : '$subtitle · $total 个结果',
+          title: '片库搜索',
+          subtitle: medias.isEmpty ? typeLabel : '$total 个结果',
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -775,26 +790,38 @@ class _MediaResults extends StatelessWidget {
               for (final media in medias)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 8),
-                  child: _MediaListCard(
-                    media: media,
-                    onTap: () {
-                      _push(
-                        context,
-                        controller.mediaLabel(media),
-                        (_) => _TargetDetailLoader(
-                          controller: controller,
+                  child:
+                      media.containsKey('search_url') &&
+                          media.containsKey('kind')
+                      ? _ListCard(
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 12, right: 4),
+                            child: HyruleSubtitleRow(
+                              key: ValueKey(media['id']),
+                              media: media,
+                              aiAvailable: libraryAiAvailable,
+                            ),
+                          ),
+                        )
+                      : _MediaListCard(
                           media: media,
+                          onTap: () {
+                            _push(
+                              context,
+                              controller.mediaLabel(media),
+                              (_) => _TargetDetailLoader(
+                                controller: controller,
+                                media: media,
+                              ),
+                            ).then((_) => controller.resetSelection());
+                          },
                         ),
-                      ).then((_) => controller.resetSelection());
-                    },
-                  ),
                 ),
             if (medias.isNotEmpty)
               LoadMoreFooter(
                 hasMore: hasMore,
                 total: total,
-                isLoading:
-                    controller.mediaSearching.value && medias.isNotEmpty,
+                isLoading: controller.mediaSearching.value && medias.isNotEmpty,
                 onLoadMore: controller.loadMoreMedia,
               ),
           ],
@@ -804,11 +831,174 @@ class _MediaResults extends StatelessWidget {
   }
 }
 
-class _MediaListCard extends StatelessWidget {
-  const _MediaListCard({
+class HyruleSubtitleRow extends StatefulWidget {
+  const HyruleSubtitleRow({
+    super.key,
     required this.media,
-    required this.onTap,
+    required this.aiAvailable,
+    this.compact = false,
+    this.onChanged,
   });
+
+  final Map<String, dynamic> media;
+  final bool aiAvailable;
+  final bool compact;
+  final Future<void> Function()? onChanged;
+
+  @override
+  State<HyruleSubtitleRow> createState() => _HyruleSubtitleRowState();
+}
+
+class _HyruleSubtitleRowState extends State<HyruleSubtitleRow> {
+  bool _working = false;
+  bool _submitted = false;
+
+  Object? get _taskState =>
+      SubtitleManualUploadFormController.asMap(widget.media['task'])?['state'];
+
+  @override
+  void didUpdateWidget(covariant HyruleSubtitleRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.media, widget.media)) _submitted = false;
+  }
+
+  Future<void> _perform({required bool upload}) async {
+    if (_working) return;
+    setState(() => _working = true);
+    final controller = SubtitleManualUploadFormController(
+      formMode: false,
+      singleSubtitleUpload: upload,
+    );
+    final target = {
+      'id': widget.media['id'],
+      'name': widget.media['file'],
+      'title': widget.media['title'],
+      'path': widget.media['display'],
+      'writable': widget.media['available'],
+      'original': widget.media['original'],
+    };
+    controller.targets.assignAll([target]);
+    try {
+      if (upload) {
+        controller.openSingleUpload(target);
+        await _push(
+          context,
+          '上传字幕',
+          (_) => _UploadPanel(controller: controller),
+        );
+        if (controller.lastWritten.isEmpty) return;
+        if (mounted) ToastUtil.success('字幕已写入');
+      } else {
+        Future<void> submit() async {
+          await controller.submitAiForTargets(target);
+          if (!mounted || controller.errorText.value != null) return;
+          setState(() => _submitted = true);
+          ToastUtil.success('已提交 AI 字幕任务');
+        }
+
+        if (_taskState == 'done') {
+          await _confirmAction(
+            context,
+            title: '重新生成 AI 字幕？',
+            message: '将为「${target['title']}」使用当前订阅模型重新生成字幕。',
+            onConfirm: submit,
+          );
+        } else {
+          await submit();
+        }
+        if (!_submitted) return;
+      }
+      if (mounted) await widget.onChanged?.call();
+    } finally {
+      controller.onClose();
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final title = '${widget.media['title'] ?? ''}';
+    final url = Uri.tryParse('${widget.media['search_url'] ?? ''}');
+    final subhd =
+        url != null &&
+        url.scheme == 'https' &&
+        url.host == 'subhd.tv' &&
+        url.userInfo.isEmpty;
+    final id = widget.media['id'];
+    final writable =
+        widget.media['available'] == true && id is String && id.isNotEmpty;
+    final original = widget.media['original'] == true;
+    final running =
+        _submitted || _taskState == 'queued' || _taskState == 'running';
+    final aiLabel = running
+        ? 'AI 字幕处理中'
+        : original
+        ? '原盘请手动上传字幕'
+        : !widget.aiAvailable
+        ? 'AI 订阅线路未配置'
+        : _taskState == 'done'
+        ? '重新生成 AI 字幕'
+        : 'AI 翻译';
+    final iconStyle = IconButton.styleFrom(
+      fixedSize: const Size.square(44),
+      padding: EdgeInsets.zero,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    );
+    return Row(
+      children: [
+        Expanded(
+          child: Tooltip(
+            message: title,
+            child: Text(
+              title,
+              maxLines: widget.compact ? 1 : 2,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+          ),
+        ),
+        TextButton(
+          onPressed: subhd
+              ? () => WebUtil.open(url: url.toString(), internal: false)
+              : null,
+          style: TextButton.styleFrom(
+            minimumSize: const Size(54, 44),
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          child: const Text('SubHD'),
+        ),
+        IconButton(
+          tooltip: writable ? '上传字幕' : '片源不可写入',
+          onPressed: writable && !_working
+              ? () => _perform(upload: true)
+              : null,
+          style: iconStyle,
+          icon: const Icon(Icons.upload_file_outlined, size: 19),
+        ),
+        IconButton(
+          tooltip: aiLabel,
+          onPressed:
+              writable &&
+                  !original &&
+                  !running &&
+                  widget.aiAvailable &&
+                  !_working
+              ? () => _perform(upload: false)
+              : null,
+          style: iconStyle,
+          icon: Icon(
+            running ? Icons.hourglass_top : Icons.auto_awesome,
+            size: 18,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _MediaListCard extends StatelessWidget {
+  const _MediaListCard({required this.media, required this.onTap});
 
   final Map<String, dynamic> media;
   final VoidCallback onTap;
@@ -818,6 +1008,8 @@ class _MediaListCard extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final isTv = _isTvMedia(media);
+    final poster = _mediaPoster(media);
+    final showPoster = media['text_only'] != true && poster.isNotEmpty;
     final title = _mediaDisplayTitle(media);
     final year = _mediaYearText(media);
     final stats = _mediaStats(media);
@@ -825,15 +1017,19 @@ class _MediaListCard extends StatelessWidget {
     return _ListCard(
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 12, 8, 12),
+        padding: EdgeInsets.fromLTRB(
+          12,
+          showPoster ? 12 : 8,
+          8,
+          showPoster ? 12 : 8,
+        ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            _MediaListPoster(
-              url: _mediaPoster(media),
-              isTv: isTv,
-            ),
-            const SizedBox(width: 12),
+            if (showPoster) ...[
+              _MediaListPoster(url: poster, isTv: isTv),
+              const SizedBox(width: 12),
+            ],
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1672,11 +1868,14 @@ class _HistoryCard extends StatelessWidget {
       final targets = SubtitleManualUploadFormController.asMapList(
         item['targets'],
       );
+      final poster = _mediaPoster(item);
       return _ListCard(
         child: Column(
           children: [
             ListTile(
-              leading: _Poster(url: _mediaPoster(item)),
+              leading: item['text_only'] != true && poster.isNotEmpty
+                  ? _Poster(url: poster)
+                  : null,
               title: Text(
                 controller.mediaLabel(item),
                 style: Theme.of(
@@ -1794,6 +1993,8 @@ class _UploadPanel extends StatelessWidget {
       final items = preview == null
           ? <Map<String, dynamic>>[]
           : SubtitleManualUploadFormController.asMapList(preview['items']);
+      final single = controller.singleSubtitleUpload;
+      final working = controller.preparing.value || controller.applying.value;
       return _Panel(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1807,14 +2008,12 @@ class _UploadPanel extends StatelessWidget {
               runSpacing: 8,
               children: [
                 FilledButton.icon(
-                  onPressed: controller.preparing.value
-                      ? null
-                      : controller.pickUploadFiles,
+                  onPressed: working ? null : controller.pickUploadFiles,
                   icon: const Icon(Icons.attach_file),
                   label: const Text('选择字幕/压缩包'),
                 ),
                 OutlinedButton.icon(
-                  onPressed: controller.pickedFiles.isEmpty
+                  onPressed: working || controller.pickedFiles.isEmpty
                       ? null
                       : controller.prepareUpload,
                   icon: const Icon(Icons.preview),
@@ -1824,9 +2023,11 @@ class _UploadPanel extends StatelessWidget {
             ),
             if (controller.pickedFiles.isEmpty && items.isEmpty) ...[
               const SizedBox(height: 12),
-              const _InlineHint(
+              _InlineHint(
                 icon: Icons.attach_file,
-                text: '选择字幕文件或压缩包后，会先生成可确认的写入预览。',
+                text: single
+                    ? '支持 SRT、ASS、SSA 或 ZIP。每次确认一份字幕。'
+                    : '选择字幕文件或压缩包后，会先生成可确认的写入预览。',
               ),
             ],
             if (controller.pickedFiles.isNotEmpty) ...[
@@ -1834,49 +2035,56 @@ class _UploadPanel extends StatelessWidget {
               for (final file in controller.pickedFiles)
                 _PickedFileRow(
                   file: file,
-                  onRemove: () => controller.removePickedFile(file),
+                  onRemove: working
+                      ? null
+                      : () => controller.removePickedFile(file),
                 ),
             ],
             if (items.isNotEmpty) ...[
               const Divider(height: 24),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      decoration: _fieldDecoration(
-                        context,
-                        label: '批量语言后缀',
-                        dense: true,
+              if (!single) ...[
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        decoration: _fieldDecoration(
+                          context,
+                          label: '批量语言后缀',
+                          dense: true,
+                        ),
+                        onChanged: (value) =>
+                            controller.batchLanguageSuffix.value = value,
                       ),
-                      onChanged: (value) =>
-                          controller.batchLanguageSuffix.value = value,
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  OutlinedButton(
-                    onPressed: controller.applyBatchLanguageSuffix,
-                    child: const Text('应用'),
-                  ),
-                ],
-              ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                value: controller.fixTimeline.value,
-                onChanged: controller.timelineAvailable
-                    ? (value) => controller.fixTimeline.value = value
-                    : null,
-                title: const Text('写入后智能调轴'),
-                subtitle: Text(
-                  controller.timelineAvailable ? '流媒体目标会自动跳过' : '调轴依赖不可用',
+                    const SizedBox(width: 8),
+                    OutlinedButton(
+                      onPressed: controller.applyBatchLanguageSuffix,
+                      child: const Text('应用'),
+                    ),
+                  ],
                 ),
-              ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: controller.fixTimeline.value,
+                  onChanged: controller.timelineAvailable
+                      ? (value) => controller.fixTimeline.value = value
+                      : null,
+                  title: const Text('写入后智能调轴'),
+                  subtitle: Text(
+                    controller.timelineAvailable ? '流媒体目标会自动跳过' : '调轴依赖不可用',
+                  ),
+                ),
+              ],
               for (final item in items)
                 _PreviewItem(controller: controller, item: item),
               const SizedBox(height: 8),
               SizedBox(
                 width: double.infinity,
                 child: FilledButton.icon(
-                  onPressed: controller.applying.value
+                  onPressed:
+                      working ||
+                          (single &&
+                              controller.selectedPreviewItems.length != 1)
                       ? null
                       : () async {
                           await controller.applyUpload();
@@ -1926,6 +2134,15 @@ class _PreviewItem extends StatelessWidget {
           break;
         }
       }
+      final single = controller.singleSubtitleUpload;
+      final target = controller.targetById['${current['target_id']}'];
+      final languages = {
+        'zh-Hans': '简体中文',
+        'zh-Hant': '繁体中文',
+        'zh-en': '中英双语',
+        if (target?['original'] != true) 'eng': '英语',
+      };
+      final suffix = current['language_suffix'];
       return Padding(
         padding: const EdgeInsets.only(top: 8),
         child: _ListCard(
@@ -1939,47 +2156,76 @@ class _PreviewItem extends StatelessWidget {
                   onChanged: (value) =>
                       controller.togglePreviewItem(uploadId, value == true),
                   title: Text(
-                    '${current['source_name'] ?? '字幕文件'}',
+                    '${current['source_name'] ?? current['name'] ?? '字幕文件'}',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                       fontWeight: FontWeight.w500,
                     ),
                   ),
                   subtitle: Text('${current['output_name'] ?? ''}'),
                 ),
-                DropdownButtonFormField<String>(
-                  initialValue: '${current['target_id'] ?? ''}'.isEmpty
-                      ? null
-                      : '${current['target_id']}',
-                  decoration: _fieldDecoration(
-                    context,
-                    label: '目标视频',
-                    dense: true,
+                if (!single)
+                  DropdownButtonFormField<String>(
+                    initialValue: '${current['target_id'] ?? ''}'.isEmpty
+                        ? null
+                        : '${current['target_id']}',
+                    isExpanded: true,
+                    decoration: _fieldDecoration(
+                      context,
+                      label: '目标视频',
+                      dense: true,
+                    ),
+                    items: controller.uploadScopeTargets
+                        .map(
+                          (target) => DropdownMenuItem(
+                            value: '${target['id']}',
+                            child: Text(
+                              controller.compactTargetName(target),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value != null) {
+                        controller.updatePreviewTarget(uploadId, value);
+                      }
+                    },
                   ),
-                  items: controller.uploadScopeTargets
-                      .map(
-                        (target) => DropdownMenuItem(
-                          value: '${target['id']}',
-                          child: Text(controller.compactTargetName(target)),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (value) {
-                    if (value != null) {
-                      controller.updatePreviewTarget(uploadId, value);
-                    }
-                  },
-                ),
                 const SizedBox(height: 8),
-                TextFormField(
-                  initialValue: '${current['language_suffix'] ?? ''}',
-                  decoration: _fieldDecoration(
-                    context,
-                    label: '语言后缀',
-                    dense: true,
+                if (single)
+                  DropdownButtonFormField<String>(
+                    initialValue: languages.containsKey(suffix)
+                        ? suffix as String
+                        : null,
+                    decoration: _fieldDecoration(
+                      context,
+                      label: '字幕语言',
+                      dense: true,
+                    ),
+                    items: [
+                      for (final language in languages.entries)
+                        DropdownMenuItem(
+                          value: language.key,
+                          child: Text(language.value),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) {
+                        controller.updatePreviewLanguage(uploadId, value);
+                      }
+                    },
+                  )
+                else
+                  TextFormField(
+                    initialValue: '${current['language_suffix'] ?? ''}',
+                    decoration: _fieldDecoration(
+                      context,
+                      label: '语言后缀',
+                      dense: true,
+                    ),
+                    onChanged: (value) =>
+                        controller.updatePreviewLanguage(uploadId, value),
                   ),
-                  onChanged: (value) =>
-                      controller.updatePreviewLanguage(uploadId, value),
-                ),
               ],
             ),
           ),
@@ -4139,7 +4385,7 @@ class _PickedFileRow extends StatelessWidget {
   const _PickedFileRow({required this.file, required this.onRemove});
 
   final fp.PlatformFile file;
-  final VoidCallback onRemove;
+  final VoidCallback? onRemove;
 
   @override
   Widget build(BuildContext context) {

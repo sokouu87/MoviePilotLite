@@ -7,6 +7,7 @@ import 'package:moviepilot_mobile/gen/assets.gen.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/dashboard_shortcuts.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/dashboard_skeletons.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/dashboard_widget_styles.dart';
+import 'package:moviepilot_mobile/modules/dashboard/widgets/hyrule_recent_widget.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/cpu_widget.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/media_recommend_widget.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/media_stats_widget.dart';
@@ -255,6 +256,21 @@ class DashboardPage extends GetView<DashboardController> {
       const serverStatusNames = {'实时速率', '存储空间', 'CPU', '内存'};
       const mediaBrowseNames = {'最近添加', '我的媒体库', '继续观看'};
       final sections = <_DashboardSection>[
+        if (visible.contains(DashboardController.hyruleWidgetName) &&
+            appService.canManage)
+          _DashboardSection(
+            id: 'hyrule-subtitles',
+            widgetNames: const {DashboardController.hyruleWidgetName},
+            child: Obx(() {
+              final library = controller.hyruleRecent.value;
+              if (library == null) return const SizedBox.shrink();
+              return HyruleRecentWidget(
+                library: library,
+                onRefresh: () => controller.loadHyruleRecent(force: true),
+              );
+            }),
+          ),
+
         if (_showAny(visible, serverStatusNames))
           _DashboardSection(
             id: 'server-status',

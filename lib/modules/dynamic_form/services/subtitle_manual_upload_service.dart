@@ -96,6 +96,31 @@ class SubtitleManualUploadService {
     return _unwrap(response);
   }
 
+  Future<Map<String, dynamic>?> libraryPage({
+    required String token,
+    String keyword = '',
+    String kind = 'all',
+    int offset = 0,
+    bool recentOnly = false,
+  }) async {
+    final response = await _apiClient.get<dynamic>(
+      '$basePath/library_page',
+      token: token,
+      timeout: 15,
+      skipUnauthorizedHandling: true,
+      queryParameters: {
+        'q': keyword,
+        'kind': kind,
+        'offset': offset,
+        'state': recentOnly ? 'recent' : 'all',
+        'order': 'desc',
+      },
+    );
+    if (response.statusCode == 404 || response.statusCode == 405) return null;
+    final data = _extractMap(_unwrap(response).data);
+    return data?['rows'] is List ? data : null;
+  }
+
   Future<SubtitleManualUploadApiResult> matchHistory({
     required String token,
     required String keyword,
