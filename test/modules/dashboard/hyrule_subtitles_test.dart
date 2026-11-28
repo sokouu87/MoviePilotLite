@@ -29,6 +29,8 @@ class _TestApi extends GetxController implements ApiClient {
   @override
   String? token = 'mock-session';
   String? submittedId;
+  Map<String, dynamic>? englishChoice;
+  bool offerEnglish = false;
   String? query;
   Map<String, dynamic>? applied;
   bool legacy = false;
@@ -94,6 +96,27 @@ class _TestApi extends GetxController implements ApiClient {
     final body = data as Map<String, dynamic>;
     switch (path.split('/').last) {
       case 'ai_submit':
+        if (offerEnglish && body['find_english'] == true) {
+          return _response(path, {
+            'english_options': {
+              'token': 'english-offer',
+              'file': 'movie-1.strm',
+              'candidates': [
+                {
+                  'index': 0,
+                  'title': 'Movie.BluRay',
+                  'provider': 'Open Subtitles',
+                },
+                {
+                  'index': 1,
+                  'title': 'Movie.WEB-DL',
+                  'provider': 'Open Subtitles',
+                },
+              ],
+            },
+          });
+        }
+        englishChoice = body['english_choice'] as Map<String, dynamic>?;
         submittedId = (body['target_ids'] as List).single as String;
         return _response(path, {
           'tasks': [
@@ -352,6 +375,28 @@ void main() {
     expect(find.byTooltip('上传字幕'), findsOneWidget);
     expect(find.byTooltip('AI 翻译'), findsOneWidget);
     expect(find.byType(Image), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('从首页确认 Emby 英文候选后才提交 AI', (tester) async {
+    api.offerEnglish = true;
+    await showCard(tester);
+    await tester.tap(find.byTooltip('AI 翻译'));
+    await tester.pumpAndSettle();
+    expect(find.text('选择英文字幕'), findsOneWidget);
+    expect(find.text('movie-1.strm'), findsOneWidget);
+    expect(api.submittedId, isNull);
+    final submit = find.widgetWithText(FilledButton, '下载并翻译');
+    expect(tester.widget<FilledButton>(submit).onPressed, isNull);
+    await tester.tap(find.text('Movie.WEB-DL'));
+    await tester.pump();
+    await tester.tap(submit);
+    await tester.pumpAndSettle();
+    expect(api.englishChoice, {'token': 'english-offer', 'index': 1});
+    expect(api.submittedId, _id(1));
+    expect(find.byTooltip('AI 字幕处理中'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
 

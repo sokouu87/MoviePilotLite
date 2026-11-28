@@ -370,8 +370,10 @@ class SubtitleManualUploadFormController extends GetxController
     list.sort((a, b) {
       final cmp = switch (mediaSortKey.value) {
         SubtitleMediaSortKey.title => mediaLabel(a).compareTo(mediaLabel(b)),
-        SubtitleMediaSortKey.year =>
-          asInt(a['year'], 0).compareTo(asInt(b['year'], 0)),
+        SubtitleMediaSortKey.year => asInt(
+          a['year'],
+          0,
+        ).compareTo(asInt(b['year'], 0)),
         SubtitleMediaSortKey.defaultSort => 0,
       };
       if (cmp == 0) return 0;
@@ -905,24 +907,36 @@ class SubtitleManualUploadFormController extends GetxController
     onlineSelectedResultKeys.refresh();
   }
 
-  Future<void> submitAiForTargets([Map<String, dynamic>? target]) async {
+  Future<Map<String, dynamic>?> submitAiForTargets([
+    Map<String, dynamic>? target,
+    Map<String, dynamic>? englishRequest,
+  ]) async {
     final ids = target == null ? activeTargetIds : [_text(target['id'])];
     if (ids.isEmpty) {
       ToastUtil.error('请先选择要生成 AI 字幕的目标');
-      return;
+      return null;
     }
+    Map<String, dynamic>? options;
     aiWorking.value = true;
     await _guard(() async {
       final result = await _service.postJsonAction('ai_submit', {
         'target_ids': ids,
         'locked_target_ids': lockedTargetIds.toList(),
         'source_policy': 'auto',
+        ...?englishRequest,
       }, _requireToken());
-      aiTasks.value = asMap(result.data) ?? {};
-      messageText.value = result.message ?? '已提交 AI 字幕任务';
+      final data = asMap(result.data) ?? {};
+      options = asMap(data['english_options']);
+      if (options != null) return;
+      aiTasks.value = data;
+      final notice = _text(data['source_notice']);
+      messageText.value = notice.isNotEmpty
+          ? notice
+          : result.message ?? '已提交 AI 字幕任务';
       _startAiPolling();
     }, fallback: '提交 AI 字幕任务失败');
     aiWorking.value = false;
+    return options;
   }
 
   Future<void> cancelAiForTargets() async {

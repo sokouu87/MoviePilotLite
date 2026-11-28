@@ -646,10 +646,7 @@ class _StatusSection extends StatelessWidget {
             Row(
               children: [
                 Expanded(
-                  child: _CapChip(
-                    label: 'RAR',
-                    ready: archive['rar'] == true,
-                  ),
+                  child: _CapChip(label: 'RAR', ready: archive['rar'] == true),
                 ),
                 Expanded(
                   child: _CapChip(
@@ -658,10 +655,7 @@ class _StatusSection extends StatelessWidget {
                   ),
                 ),
                 Expanded(
-                  child: _CapChip(
-                    label: 'AI',
-                    ready: ai['available'] == true,
-                  ),
+                  child: _CapChip(label: 'AI', ready: ai['available'] == true),
                 ),
               ],
             ),
@@ -688,12 +682,7 @@ class _StatusLed extends StatelessWidget {
         color: color,
         shape: BoxShape.circle,
         boxShadow: active
-            ? [
-                BoxShadow(
-                  color: color.withValues(alpha: 0.35),
-                  blurRadius: 6,
-                ),
-              ]
+            ? [BoxShadow(color: color.withValues(alpha: 0.35), blurRadius: 6)]
             : null,
       ),
     );
@@ -721,10 +710,7 @@ class _CapChip extends StatelessWidget {
           color: ready ? scheme.primary : scheme.outline,
         ),
         const SizedBox(width: 4),
-        Text(
-          label,
-          style: theme.textTheme.bodySmall?.copyWith(color: color),
-        ),
+        Text(label, style: theme.textTheme.bodySmall?.copyWith(color: color)),
       ],
     );
   }
@@ -774,8 +760,7 @@ class _MediaResults extends StatelessWidget {
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    if (keyword.isNotEmpty)
-                      _MetaChip(label: '关键词: $keyword'),
+                    if (keyword.isNotEmpty) _MetaChip(label: '关键词: $keyword'),
                     if (controller.hasActiveMediaFilters)
                       _MetaChip(label: '类型: $typeLabel'),
                   ],
@@ -862,6 +847,59 @@ class _HyruleSubtitleRowState extends State<HyruleSubtitleRow> {
     if (!identical(oldWidget.media, widget.media)) _submitted = false;
   }
 
+  Future<int?> _chooseEnglish(Map<String, dynamic> options) {
+    final candidates = SubtitleManualUploadFormController.asMapList(
+      options['candidates'],
+    ).where((item) => item['index'] is int);
+    int? selected;
+    return showDialog<int>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, update) => AlertDialog(
+          scrollable: true,
+          title: const Text('选择英文字幕'),
+          content: SizedBox(
+            width: 480,
+            child: RadioGroup<int>(
+              groupValue: selected,
+              onChanged: (value) => update(() => selected = value),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('${options['file'] ?? ''}'),
+                  const Text('请核对片源版本，再下载并翻译。'),
+                  const SizedBox(height: 8),
+                  for (final item in candidates)
+                    RadioListTile<int>(
+                      value: item['index'] as int,
+                      contentPadding: EdgeInsets.zero,
+                      title: Text('${item['title']}'),
+                      subtitle: Text(
+                        '${item['provider']}${item['hash_match'] == true ? ' · 哈希匹配' : ''}',
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('返回'),
+            ),
+            FilledButton(
+              onPressed: selected == null
+                  ? null
+                  : () => Navigator.of(dialogContext).pop(selected),
+              child: const Text('下载并翻译'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _perform({required bool upload}) async {
     if (_working) return;
     setState(() => _working = true);
@@ -890,10 +928,20 @@ class _HyruleSubtitleRowState extends State<HyruleSubtitleRow> {
         if (mounted) ToastUtil.success('字幕已写入');
       } else {
         Future<void> submit() async {
-          await controller.submitAiForTargets(target);
+          final options = await controller.submitAiForTargets(target, {
+            'find_english': true,
+          });
+          if (!mounted || controller.errorText.value != null) return;
+          if (options != null) {
+            final selected = await _chooseEnglish(options);
+            if (!mounted || selected == null) return;
+            await controller.submitAiForTargets(target, {
+              'english_choice': {'token': options['token'], 'index': selected},
+            });
+          }
           if (!mounted || controller.errorText.value != null) return;
           setState(() => _submitted = true);
-          ToastUtil.success('已提交 AI 字幕任务');
+          ToastUtil.success(controller.messageText.value ?? '已提交 AI 字幕任务');
         }
 
         if (_taskState == 'done') {
@@ -1056,11 +1104,7 @@ class _MediaListCard extends StatelessWidget {
                   ],
                   if (stats.isNotEmpty) ...[
                     const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 6,
-                      children: stats,
-                    ),
+                    Wrap(spacing: 8, runSpacing: 6, children: stats),
                   ],
                 ],
               ),
@@ -1159,11 +1203,7 @@ class _MediaStatChip extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              icon,
-              size: 13,
-              color: scheme.primary.withValues(alpha: 0.88),
-            ),
+            Icon(icon, size: 13, color: scheme.primary.withValues(alpha: 0.88)),
             const SizedBox(width: 4),
             Text(
               label,
@@ -2326,16 +2366,11 @@ class _OnlinePanel extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           if (controller.onlineSearching.value)
-            const _CenterStatusView(
-              loading: true,
-              text: '正在搜索在线字幕',
-            )
+            const _CenterStatusView(loading: true, text: '正在搜索在线字幕')
           else if (controller.onlineView.value == 'manual')
             _ManualSearchPanel(controller: controller)
           else if (results.isEmpty)
-            const _CenterStatusView(
-              text: '暂无在线字幕结果，可切换字幕源或使用手动搜索链接。',
-            )
+            const _CenterStatusView(text: '暂无在线字幕结果，可切换字幕源或使用手动搜索链接。')
           else
             for (final item in results)
               Padding(
@@ -2537,9 +2572,7 @@ class _UploadPreviewLoaderState extends State<_UploadPreviewLoader> {
     if (!mounted) return;
     setState(() {
       _loading = false;
-      _error = ok
-          ? null
-          : widget.controller.errorText.value ?? '预览生成失败，请重试';
+      _error = ok ? null : widget.controller.errorText.value ?? '预览生成失败，请重试';
     });
   }
 
@@ -2552,10 +2585,7 @@ class _UploadPreviewLoaderState extends State<_UploadPreviewLoader> {
   @override
   Widget build(BuildContext context) {
     if (_loading || widget.controller.onlineDownloading.value) {
-      return const _CenterStatusView(
-        loading: true,
-        text: '正在下载并生成预览…',
-      );
+      return const _CenterStatusView(loading: true, text: '正在下载并生成预览…');
     }
     if (widget.controller.uploadPreview.value == null) {
       return Column(
@@ -2606,9 +2636,7 @@ class _OnlinePreviewPanel extends StatelessWidget {
             decoration: BoxDecoration(
               color: scheme.primaryContainer.withValues(alpha: 0.34),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: scheme.primary.withValues(alpha: 0.14),
-              ),
+              border: Border.all(color: scheme.primary.withValues(alpha: 0.14)),
             ),
             child: Row(
               children: [
@@ -2619,10 +2647,7 @@ class _OnlinePreviewPanel extends StatelessWidget {
                     color: scheme.primary.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Icon(
-                    Icons.fact_check_outlined,
-                    color: scheme.primary,
-                  ),
+                  child: Icon(Icons.fact_check_outlined, color: scheme.primary),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -4066,10 +4091,7 @@ class _OnlinePreparingView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const _CenterStatusView(
-      loading: true,
-      text: '正在读取字幕源并准备搜索',
-    );
+    return const _CenterStatusView(loading: true, text: '正在读取字幕源并准备搜索');
   }
 }
 
@@ -4503,10 +4525,7 @@ List<Widget> _mediaStats(Map<String, dynamic> item) {
     }
     if (seasonCount > 0) {
       chips.add(
-        _MediaStatChip(
-          icon: Icons.layers_outlined,
-          label: '$seasonCount 季',
-        ),
+        _MediaStatChip(icon: Icons.layers_outlined, label: '$seasonCount 季'),
       );
     }
     if (episodeCount > 0) {
@@ -4521,10 +4540,7 @@ List<Widget> _mediaStats(Map<String, dynamic> item) {
 
   if (videoCount > 0) {
     chips.add(
-      _MediaStatChip(
-        icon: Icons.videocam_outlined,
-        label: '$videoCount 视频',
-      ),
+      _MediaStatChip(icon: Icons.videocam_outlined, label: '$videoCount 视频'),
     );
   }
 
@@ -4650,10 +4666,8 @@ Future<void> _pushOnlineSheet(
         icon: const Icon(Icons.refresh_rounded),
       );
     }),
-    footerBuilder: (sheetContext) => _OnlineActionBar(
-      controller: controller,
-      sheetContext: sheetContext,
-    ),
+    footerBuilder: (sheetContext) =>
+        _OnlineActionBar(controller: controller, sheetContext: sheetContext),
   );
 }
 
