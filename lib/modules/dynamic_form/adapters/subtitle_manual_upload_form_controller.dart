@@ -370,10 +370,8 @@ class SubtitleManualUploadFormController extends GetxController
     list.sort((a, b) {
       final cmp = switch (mediaSortKey.value) {
         SubtitleMediaSortKey.title => mediaLabel(a).compareTo(mediaLabel(b)),
-        SubtitleMediaSortKey.year => asInt(
-          a['year'],
-          0,
-        ).compareTo(asInt(b['year'], 0)),
+        SubtitleMediaSortKey.year =>
+          asInt(a['year'], 0).compareTo(asInt(b['year'], 0)),
         SubtitleMediaSortKey.defaultSort => 0,
       };
       if (cmp == 0) return 0;
